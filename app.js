@@ -1,525 +1,496 @@
-/* ═══════════════════════════════════════════════════════════════
-   SISTEMA DE ENFERMERÍA — app.js
-   Lógica principal, eventos, timers y gestión de turnos
-═══════════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════
+   TRAZABILIDAD DE ENFERMERÍA — app.js v2
+   Lógica principal corregida completamente
+═══════════════════════════════════════════════════════════ */
 
 const APP = {
-  currentView:    'camas',
-  currentFilter:  'todos',
-  historyFilter:  '',
-  timerInterval:  null,
-  clockInterval:  null,
+  view:        'camas',
+  filter:      'todos',
+  histFilter:  '',
+  zoneId:      'all',
+  _timerIv:    null,
+  _clockIv:    null,
+  _confirmShiftClose: null,
 
-  /* ─── INIT ─── */
+  /* ══════════════════════════════════════════════════ BOOT */
   init() {
     initData();
-    this.loadConfig();
+    this.zoneId = getCfg().zoneId || 'all';
     this.startClock();
+    const user = getUser();
+    if (!user) { renderLogin(); return; }
+    this.boot();
+  },
+
+  boot() {
+    document.getElementById('login-screen').classList.add('hidden');
+    this.updateTopbar();
     this.render();
-    this.bindGlobalEvents();
     this.startTimers();
-    this.handleResize();
-    window.addEventListener('resize', () => this.handleResize());
+    this.bindEvents();
+    window.addEventListener('resize', () => { if (window.innerWidth > 1100) this.closeSidebar(); });
   },
 
-  /* ─── RESPONSIVE: sidebar mobile toggle ─── */
-  toggleSidebar() {
-    const sidebar  = document.getElementById('sidebar');
-    const overlay  = document.getElementById('sidebar-overlay');
-    const isOpen   = sidebar.classList.contains('open');
-    if (isOpen) { this.closeSidebar(); }
-    else {
-      sidebar.classList.add('open');
-      overlay.classList.add('visible');
-    }
-  },
-  closeSidebar() {
-    document.getElementById('sidebar').classList.remove('open');
-    document.getElementById('sidebar-overlay').classList.remove('visible');
-  },
-  handleResize() {
-    if (window.innerWidth > 1024) { this.closeSidebar(); }
+  /* ══════════════════════════════════════════════════ LOGIN */
+  doLogin() {
+    const name = (document.getElementById('li-name')?.value || '').trim();
+    const role = document.getElementById('li-role')?.value || ROLES[0];
+    const zone = document.getElementById('li-zone')?.value || HOSPITAL_ZONES[1]?.id || 'all';
+    if (!name) { alert('Por favor ingresa tu nombre completo.'); return; }
+    const user = { name, role, zone };
+    setUser(user);
+    const cfg = getCfg();
+    cfg.currentShift = detectShift();
+    cfg.shiftStart   = fmtTime(new Date());
+    cfg.zoneId       = zone;
+    saveCfg(cfg);
+    this.zoneId = zone;
+    this.boot();
   },
 
-  /* ─── CONFIG LOAD ─── */
-  loadConfig() {
-    const cfg = getConfig();
-    document.getElementById('service-name-display').textContent = cfg.serviceName;
-    document.getElementById('professional-name').textContent = cfg.professional;
-    this.updateShiftBtn(cfg.currentShift);
+  logout() {
+    if (!confirm('¿Cerrar sesión? Se perderá el acceso hasta que vuelvas a ingresar.')) return;
+    clearUser();
+    document.getElementById('login-screen').classList.remove('hidden');
+    document.getElementById('sidebar').innerHTML   = '';
+    document.getElementById('main-content').innerHTML = '';
+    renderLogin();
   },
 
-  updateShiftBtn(shiftType) {
-    const btn = document.getElementById('shift-btn');
+  /* ══════════════════════════════════════════════ TOPBAR */
+  updateTopbar() {
+    const cfg  = getCfg();
+    const user = getUser() || { name: '--', role: '--' };
+    const btn  = document.getElementById('shift-btn');
     const icon = document.getElementById('shift-icon');
-    const label = document.getElementById('shift-label');
-    if (shiftType === 'DIA') {
-      icon.textContent = '☀';
-      label.textContent = 'Turno Día  07:00–19:00';
-      btn.classList.remove('night');
+    const lbl  = document.getElementById('shift-label');
+    const chip = document.getElementById('user-chip-name');
+    const crole= document.getElementById('user-chip-role');
+    const svc  = document.getElementById('service-name-display');
+
+    if (cfg.currentShift === 'DIA') {
+      icon.textContent = '☀'; lbl.textContent  = 'Turno Día  08:00 – 20:00';
+      btn.classList.remove('noche');
     } else {
-      icon.textContent = '🌙';
-      label.textContent = 'Turno Noche  19:00–07:00';
-      btn.classList.add('night');
+      icon.textContent = '🌙'; lbl.textContent = 'Turno Noche  20:00 – 08:00';
+      btn.classList.add('noche');
     }
+    if (chip)  chip.textContent  = user.name;
+    if (crole) crole.textContent = user.role;
+    const zone = HOSPITAL_ZONES.find(z => z.id === (cfg.zoneId || 'all'));
+    if (svc)   svc.textContent   = zone ? zone.name : 'Todas las zonas';
   },
 
-  /* ─── CLOCK ─── */
+  /* ══════════════════════════════════════════════════ CLOCK */
   startClock() {
     const tick = () => {
       const now = new Date();
-      const clock = document.getElementById('clock');
-      const dateEl = document.getElementById('date-display');
-      if (clock) clock.textContent = now.toLocaleTimeString('es-CL');
-      if (dateEl) dateEl.textContent = now.toLocaleDateString('es-CL', { weekday: 'short', day: 'numeric', month: 'short' });
+      const cl = document.getElementById('clock');
+      const dl = document.getElementById('date-display');
+      if (cl) cl.textContent = now.toLocaleTimeString('es-CL');
+      if (dl) dl.textContent = now.toLocaleDateString('es-CL', { weekday:'short', day:'numeric', month:'short' });
     };
     tick();
-    this.clockInterval = setInterval(tick, 1000);
+    if (this._clockIv) clearInterval(this._clockIv);
+    this._clockIv = setInterval(tick, 1000);
   },
 
-  /* ─── TIMERS (bed cards) ─── */
+  /* ══════════════════════════════════════════════════ TIMERS */
   startTimers() {
-    if (this.timerInterval) clearInterval(this.timerInterval);
-    this.timerInterval = setInterval(() => {
+    if (this._timerIv) clearInterval(this._timerIv);
+    this._timerIv = setInterval(() => {
       document.querySelectorAll('.timer-val').forEach(el => {
-        const iso = el.dataset.ingreso;
+        const iso = el.dataset.iso;
         if (iso) el.textContent = calcElapsed(iso) || '--';
       });
     }, 60000);
   },
 
-  /* ─── RENDER ─── */
+  /* ══════════════════════════════════════════════════ RENDER */
   render() {
     this.renderSidebar();
     this.renderMain();
+    this.updateTopbar();
   },
 
   renderSidebar() {
-    document.getElementById('sidebar').innerHTML = renderSidebar(this.currentView, this.currentFilter);
+    document.getElementById('sidebar').innerHTML =
+      renderSidebar(this.view, this.filter, this.zoneId);
   },
 
   renderMain() {
-    const main = document.getElementById('main-content');
-    switch (this.currentView) {
-      case 'camas':      main.innerHTML = renderBedsView(this.currentFilter); break;
-      case 'pendientes': main.innerHTML = renderPendientesView(); break;
-      case 'evoluciones':main.innerHTML = renderEvolucionesView(); break;
-      case 'historico':  main.innerHTML = renderHistoricoView(this.historyFilter); break;
+    const m = document.getElementById('main-content');
+    switch (this.view) {
+      case 'camas':       m.innerHTML = renderBedsView(this.filter, this.zoneId); break;
+      case 'pendientes':  m.innerHTML = renderPendientesView(); break;
+      case 'evoluciones': m.innerHTML = renderEvolucionesView(); break;
+      case 'historico':   m.innerHTML = renderHistoricoView(this.histFilter); break;
     }
   },
 
-  /* ─── SET VIEW ─── */
-  setView(view) {
-    this.currentView = view;
-    this.currentFilter = 'todos';
+  /* ══════════════════════════════════════════════════ VIEWS */
+  setView(v) {
+    this.view = v;
+    this.filter = 'todos';
     this.closeSidebar();
     this.render();
   },
 
-  setFilter(filter) {
-    this.currentFilter = filter;
-    this.renderMain();
+  setFilter(f) {
+    this.filter = f;
+    if (this.view !== 'camas') this.view = 'camas';
     this.renderSidebar();
-  },
-
-  setHistoryFilter(cama) {
-    this.historyFilter = cama;
     this.renderMain();
   },
 
-  /* ─── SEARCH ─── */
-  handleSearch(query) {
-    if (!query.trim()) { this.renderMain(); return; }
-    const q = query.toLowerCase();
-    const patients = getPatients().filter(p =>
-      p.nombre.toLowerCase().includes(q) ||
-      p.rut.includes(q) ||
-      p.cama.includes(q) ||
-      (p.dx || '').toLowerCase().includes(q)
-    );
-    const main = document.getElementById('main-content');
-    main.innerHTML = `
-      <div class="view-header">
-        <div><div class="view-title">Búsqueda: "${query}"</div>
-        <div class="view-subtitle">${patients.length} resultado${patients.length!==1?'s':''}</div></div>
-      </div>
-      <div class="beds-grid">${patients.map(renderBedCard).join('') || '<div class="empty-state"><p>Sin resultados</p></div>'}</div>`;
+  setZone(zoneId) {
+    this.zoneId = zoneId;
+    const cfg = getCfg(); cfg.zoneId = zoneId; saveCfg(cfg);
+    this.updateTopbar();
+    this.renderMain();
   },
 
-  /* ═══════════════════════════════════════════════ PATIENT MODAL */
+  setHistFilter(cama) {
+    this.histFilter = cama;
+    this.renderMain();
+  },
+
+  /* ══════════════════════════════════════════ PATIENT MODAL */
   openPatient(cama) {
-    let p = getPatientByCama(cama);
-    if (!p) return;
-    const overlay = document.getElementById('modal-overlay');
+    const p = getPatientByCama(cama) || emptyPatient(cama);
     document.getElementById('modal-content').innerHTML = renderPatientModal(p);
-    overlay.classList.remove('hidden');
-    this.bindModalTabs();
+    document.getElementById('modal-overlay').classList.remove('hidden');
   },
 
   closeModal() {
     document.getElementById('modal-overlay').classList.add('hidden');
   },
 
-  bindModalTabs() {
-    document.querySelectorAll('.modal-tab').forEach(tab => {
-      tab.addEventListener('click', () => {
-        const target = tab.dataset.tab;
-        document.querySelectorAll('.modal-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === target));
-        document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.dataset.panel === target));
-      });
-    });
+  reopenTab(cama, tabId) {
+    this.openPatient(cama);
+    // Wait for DOM then switch tab
+    requestAnimationFrame(() => this.switchTab(tabId || 'datos'));
   },
 
-  /* ─── SAVE PATIENT ─── */
+  switchTab(tabId) {
+    document.querySelectorAll('.modal-tab').forEach(t =>
+      t.classList.toggle('active', t.dataset.tab === tabId));
+    document.querySelectorAll('.tab-panel').forEach(p =>
+      p.classList.toggle('active', p.id === 'tp-' + tabId));
+  },
+
+  /* ══════════════════════════════════════════════ SAVE PATIENT
+     Usa IDs únicos f-{field}-{cama} para lectura confiable     */
   savePatient(cama) {
-    const p = getPatientByCama(cama) || { cama, evoluciones:[], examenes:[], procedimientos:[], pendientes:[] };
-    document.querySelectorAll(`[data-field][data-cama="${cama}"]`).forEach(el => {
-      const field = el.dataset.field;
-      if (field === 'cama_display') return;
-      if (el.tagName === 'SELECT') p[field] = el.value;
-      else if (el.type === 'number') p[field] = el.value ? Number(el.value) : null;
-      else p[field] = el.value;
+    const p = getPatientByCama(cama) || emptyPatient(cama);
+    const fields = ['nombre','rut','edad','fechaNac','dx','medico','prevision',
+                    'alergias','estado','ingreso_datetime','motivo',
+                    'antecedentes','medicacion_previa'];
+    fields.forEach(field => {
+      const el = document.getElementById(`f-${field}-${cama}`);
+      if (!el) return;
+      if (el.tagName === 'SELECT')       p[field] = el.value;
+      else if (el.type === 'number')     p[field] = el.value ? Number(el.value) : null;
+      else if (el.type === 'datetime-local') p[field] = el.value ? new Date(el.value).toISOString() : null;
+      else                               p[field] = el.value.trim();
     });
+    // Auto-activar cama al asignar paciente
+    if (p.estado === 'libre' && p.nombre) p.estado = 'ok';
     updatePatient(p);
     this.render();
-    this.openPatient(cama);
-    showToast('Paciente guardado correctamente');
+    this.reopenTab(cama, 'datos');
+    toast('Guardado correctamente ✓');
   },
 
-  /* ─── DISCHARGE ─── */
+  /* ══════════════════════════════════════════════ ALTA */
   dischargePatient(cama) {
     if (!confirm(`¿Confirmar alta del paciente de la cama ${cama}?`)) return;
-    const p = getPatientByCama(cama);
-    if (!p) return;
-    p.nombre = ''; p.rut = ''; p.edad = null; p.fechaNac = ''; p.dx = '';
-    p.servicio = ''; p.medico = ''; p.prevision = ''; p.estado = 'libre';
-    p.ingreso_datetime = null; p.motivo = ''; p.antecedentes = ''; p.alergias = '';
-    p.medicacion_previa = ''; p.evoluciones = []; p.examenes = []; p.procedimientos = []; p.pendientes = [];
-    updatePatient(p);
+    const fresh = emptyPatient(cama);
+    updatePatient(fresh);
     this.closeModal();
     this.render();
-    showToast(`Cama ${cama} liberada`);
+    toast(`Cama ${cama} liberada`);
   },
 
-  /* ─── EVOLUCIONES ─── */
+  /* ══════════════════════════════════════════ EVOLUCIONES */
   showEvolForm(cama) {
-    const form = document.getElementById(`evol-form-${cama}`);
-    if (form) form.style.display = 'block';
+    const f = document.getElementById(`ef-${cama}`);
+    if (f) { f.style.display = 'block'; document.getElementById(`et-${cama}`)?.focus(); }
   },
-  cancelEvolForm(cama) {
-    const form = document.getElementById(`evol-form-${cama}`);
-    if (form) form.style.display = 'none';
+
+  setFmt(btn, fmt, cama) {
+    btn.closest('.fmt-toggle').querySelectorAll('.fmt-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const ta = document.getElementById(`et-${cama}`);
+    if (!ta) return;
+    if (fmt === 'SOAP') {
+      ta.value = 'S: (Subjetivo — qué refiere el paciente)\n\nO: (Objetivo — signos vitales, hallazgos)\n\nA: (Análisis — evaluación clínica)\n\nP: (Plan — intervenciones y próximos pasos)';
+      ta.focus();
+    } else {
+      if (ta.value.startsWith('S:')) ta.value = '';
+    }
   },
+
   saveEvol(cama) {
-    const textarea = document.getElementById(`evol-text-${cama}`);
-    const text = textarea ? textarea.value.trim() : '';
-    if (!text) { showToast('Escriba el texto de la evolución', 'warn'); return; }
-    const cfg = getConfig();
-    const now = new Date();
+    const ta = document.getElementById(`et-${cama}`);
+    const text = ta ? ta.value.trim() : '';
+    if (!text) { toast('Escriba el texto de la evolución', 'warn'); return; }
+    const cfg  = getCfg();
+    const user = getUser() || { name: 'Profesional', role: '' };
+    const now  = new Date();
     const evol = {
-      id: uid(), fechaRaw: now.toISOString(), turno: cfg.currentShift,
-      fecha: formatDateTime(now), formato: 'narrativo',
-      texto: text, autor: cfg.professional
+      id: uid(), fechaRaw: now.toISOString(),
+      turno: cfg.currentShift, fecha: fmtDT(now),
+      formato: 'narrativo', texto: text,
+      autor: `${user.name}${user.role ? ' · ' + user.role : ''}`
     };
     const p = getPatientByCama(cama);
     if (!p) return;
     p.evoluciones = [evol, ...(p.evoluciones || [])];
     updatePatient(p);
-    this.openPatient(cama);
-    // re-activate evoluciones tab
-    setTimeout(() => {
-      document.querySelectorAll('.modal-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'evoluciones'));
-      document.querySelectorAll('.tab-panel').forEach(pp => pp.classList.toggle('active', pp.dataset.panel === 'evoluciones'));
-    }, 50);
-    showToast('Evolución guardada');
-  },
-  delEvol(cama, id) {
-    if (!confirm('¿Eliminar esta evolución? Esta acción no se puede deshacer.')) return;
-    const p = getPatientByCama(cama);
-    if (!p) return;
-    p.evoluciones = (p.evoluciones || []).filter(e => e.id !== id);
-    updatePatient(p);
-    this.openPatient(cama);
-    setTimeout(() => {
-      document.querySelectorAll('.modal-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'evoluciones'));
-      document.querySelectorAll('.tab-panel').forEach(pp => pp.classList.toggle('active', pp.dataset.panel === 'evoluciones'));
-    }, 50);
-    showToast('Evolución eliminada', 'warn');
+    this.render();
+    this.reopenTab(cama, 'evoluciones');
+    toast('Evolución guardada ✓');
   },
 
-  /* ─── EXÁMENES ─── */
+  delEvol(cama, id) {
+    if (!confirm('¿Eliminar esta evolución?')) return;
+    const p = getPatientByCama(cama); if (!p) return;
+    p.evoluciones = (p.evoluciones || []).filter(e => e.id !== id);
+    updatePatient(p);
+    this.render();
+    this.reopenTab(cama, 'evoluciones');
+    toast('Evolución eliminada', 'warn');
+  },
+
+  /* ══════════════════════════════════════════════ EXÁMENES */
   addExam(cama) {
     const tipo = prompt('Tipo de examen:'); if (!tipo) return;
-    const resultado = prompt('Resultado:') || 'Pendiente';
-    const estado = prompt('Estado (pendiente / resultado / critico):', 'resultado') || 'resultado';
+    const resultado = prompt('Resultado:') || 'Pendiente resultado';
+    const estado = prompt('Estado:\n  pendiente\n  resultado\n  critico', 'resultado') || 'resultado';
+    const validEstados = ['pendiente','resultado','critico'];
     const p = getPatientByCama(cama); if (!p) return;
-    p.examenes = [{ id: uid(), tipo, resultado, fecha: formatDate(new Date()), estado }, ...(p.examenes || [])];
+    p.examenes = [{ id: uid(), tipo, resultado, fecha: fmtDate(new Date()),
+      estado: validEstados.includes(estado) ? estado : 'pendiente' },
+      ...(p.examenes || [])];
     updatePatient(p);
-    this.openPatient(cama);
-    setTimeout(() => {
-      document.querySelectorAll('.modal-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'examenes'));
-      document.querySelectorAll('.tab-panel').forEach(pp => pp.classList.toggle('active', pp.dataset.panel === 'examenes'));
-    }, 50);
-    showToast('Examen agregado');
+    this.render();
+    this.reopenTab(cama, 'examenes');
+    toast('Examen agregado');
   },
+
   delExam(cama, id) {
     const p = getPatientByCama(cama); if (!p) return;
     p.examenes = (p.examenes || []).filter(e => e.id !== id);
     updatePatient(p);
-    this.openPatient(cama);
-    setTimeout(() => {
-      document.querySelectorAll('.modal-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'examenes'));
-      document.querySelectorAll('.tab-panel').forEach(pp => pp.classList.toggle('active', pp.dataset.panel === 'examenes'));
-    }, 50);
+    this.render();
+    this.reopenTab(cama, 'examenes');
   },
 
-  /* ─── PROCEDIMIENTOS ─── */
+  /* ══════════════════════════════════════════ PROCEDIMIENTOS */
   addProc(cama) {
     const nombre = prompt('Nombre del procedimiento:'); if (!nombre) return;
-    const indicadoPor = prompt('Indicado por (médico):', 'Médico tratante') || '';
+    const indicadoPor = prompt('Indicado por:', 'Médico tratante') || '';
     const p = getPatientByCama(cama); if (!p) return;
-    p.procedimientos = [...(p.procedimientos || []), { id: uid(), nombre, indicadoPor, fecha: formatDate(new Date()), done: false, horaRealizado: '' }];
+    p.procedimientos = [...(p.procedimientos || []),
+      { id: uid(), nombre, indicadoPor, fecha: fmtDate(new Date()), done: false, hora: '' }];
     updatePatient(p);
-    this.openPatient(cama);
-    setTimeout(() => {
-      document.querySelectorAll('.modal-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'procedimientos'));
-      document.querySelectorAll('.tab-panel').forEach(pp => pp.classList.toggle('active', pp.dataset.panel === 'procedimientos'));
-    }, 50);
-    showToast('Procedimiento agregado');
+    this.render();
+    this.reopenTab(cama, 'procedimientos');
+    toast('Procedimiento agregado');
   },
+
   toggleProc(cama, id) {
     const p = getPatientByCama(cama); if (!p) return;
-    const proc = (p.procedimientos || []).find(x => x.id === id);
-    if (!proc) return;
-    proc.done = !proc.done;
-    proc.horaRealizado = proc.done ? formatTime(new Date()) : '';
+    const pr = (p.procedimientos || []).find(x => x.id === id); if (!pr) return;
+    pr.done = !pr.done;
+    pr.hora = pr.done ? fmtTime(new Date()) : '';
     updatePatient(p);
-    // Si estamos en vista global de pendientes, re-renderizar main
-    if (this.currentView === 'pendientes') { this.renderMain(); return; }
-    // Si modal abierto, actualizar
-    this.openPatient(cama);
-    setTimeout(() => {
-      document.querySelectorAll('.modal-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'procedimientos'));
-      document.querySelectorAll('.tab-panel').forEach(pp => pp.classList.toggle('active', pp.dataset.panel === 'procedimientos'));
-    }, 50);
+    // Si estamos en vista global de pendientes, solo re-render main
+    if (this.view === 'pendientes') { this.renderMain(); return; }
+    this.render();
+    this.reopenTab(cama, 'procedimientos');
   },
+
   delProc(cama, id) {
     const p = getPatientByCama(cama); if (!p) return;
     p.procedimientos = (p.procedimientos || []).filter(x => x.id !== id);
     updatePatient(p);
-    this.openPatient(cama);
-    setTimeout(() => {
-      document.querySelectorAll('.modal-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'procedimientos'));
-      document.querySelectorAll('.tab-panel').forEach(pp => pp.classList.toggle('active', pp.dataset.panel === 'procedimientos'));
-    }, 50);
+    this.render();
+    this.reopenTab(cama, 'procedimientos');
   },
 
-  /* ─── PENDIENTES ─── */
+  /* ══════════════════════════════════════════════ PENDIENTES */
   addPend(cama) {
     const texto = prompt('Descripción del pendiente:'); if (!texto) return;
     const p = getPatientByCama(cama); if (!p) return;
     p.pendientes = [...(p.pendientes || []), { id: uid(), texto }];
     updatePatient(p);
-    this.openPatient(cama);
-    setTimeout(() => {
-      document.querySelectorAll('.modal-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'pendientes'));
-      document.querySelectorAll('.tab-panel').forEach(pp => pp.classList.toggle('active', pp.dataset.panel === 'pendientes'));
-    }, 50);
-    showToast('Pendiente agregado');
+    this.render();
+    this.reopenTab(cama, 'pendientes');
+    toast('Pendiente agregado');
   },
+
   delPend(cama, id) {
     const p = getPatientByCama(cama); if (!p) return;
     p.pendientes = (p.pendientes || []).filter(x => x.id !== id);
     updatePatient(p);
-    this.openPatient(cama);
-    setTimeout(() => {
-      document.querySelectorAll('.modal-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'pendientes'));
-      document.querySelectorAll('.tab-panel').forEach(pp => pp.classList.toggle('active', pp.dataset.panel === 'pendientes'));
-    }, 50);
+    this.render();
+    this.reopenTab(cama, 'pendientes');
   },
 
-  /* ─── SHIFT TOGGLE ─── */
+  /* ══════════════════════════════════════════════ TURNO
+     Cambio manual con confirmación + snapshot automático.
+     El sistema NO cambia turno automáticamente — requiere
+     acción explícita de la enfermera al inicio de su turno.  */
   toggleShift() {
-    renderShiftCloseDialog((obs, inc) => {
-      const cfg = getConfig();
-      const snapshot = buildShiftSnapshot(cfg.professional, cfg.currentShift, cfg.shiftStart);
-      snapshot.observaciones_generales = obs;
-      snapshot.incidentes = inc;
-      addHistoryEntry(snapshot);
+    renderShiftDialog((obs, inc) => {
+      const cfg  = getCfg();
+      const user = getUser() || { name: 'Sistema', role: '' };
+      const snap = buildSnapshot(user, cfg.currentShift, cfg.shiftStart, obs, inc);
+      addHistory(snap);
       cfg.currentShift = cfg.currentShift === 'DIA' ? 'NOCHE' : 'DIA';
-      cfg.shiftStart = formatTime(new Date());
-      saveConfig(cfg);
-      this.updateShiftBtn(cfg.currentShift);
+      cfg.shiftStart   = fmtTime(new Date());
+      saveCfg(cfg);
       this.render();
-      showToast(`Turno cerrado. Iniciando ${cfg.currentShift === 'DIA' ? 'Turno Día' : 'Turno Noche'}`);
+      toast(`Turno cerrado. Iniciando ${cfg.currentShift === 'DIA' ? 'Turno Día' : 'Turno Noche'}`);
     });
   },
 
   closeShift() { this.toggleShift(); },
 
-  /* ─── HISTORIAL ─── */
-  toggleHistoryCard(idx) {
-    const body = document.getElementById(`history-body-${idx}`);
-    const header = body ? body.previousElementSibling : null;
+  /* ══════════════════════════════════════════════ HISTORIAL */
+  toggleHist(idx) {
+    const body = document.getElementById(`hb-${idx}`);
+    const hdr  = document.getElementById(`hh-${idx}`);
     if (!body) return;
-    const isOpen = body.classList.contains('open');
-    body.classList.toggle('open', !isOpen);
-    if (header) header.classList.toggle('expanded', !isOpen);
+    const open = body.classList.contains('show');
+    body.classList.toggle('show', !open);
+    hdr && hdr.classList.toggle('open', !open);
   },
 
   viewLastShift() {
-    this.currentView = 'historico';
+    this.view = 'historico';
     this.render();
-    // expand first card
-    setTimeout(() => {
-      const firstBody = document.getElementById('history-body-0');
-      const firstHeader = firstBody ? firstBody.previousElementSibling : null;
-      if (firstBody) { firstBody.classList.add('open'); firstHeader && firstHeader.classList.add('expanded'); }
-    }, 100);
+    setTimeout(() => this.toggleHist(0), 120);
   },
 
-  /* ─── EXPORT / IMPORT ─── */
+  /* ══════════════════════════════════════════════ SIDEBAR MOBILE */
+  toggleSidebar() {
+    const s = document.getElementById('sidebar');
+    const o = document.getElementById('sidebar-overlay');
+    if (s.classList.contains('open')) this.closeSidebar();
+    else { s.classList.add('open'); o.classList.add('vis'); }
+  },
+
+  closeSidebar() {
+    document.getElementById('sidebar').classList.remove('open');
+    document.getElementById('sidebar-overlay').classList.remove('vis');
+  },
+
+  /* ══════════════════════════════════════════════ SEARCH */
+  handleSearch(q) {
+    if (!q.trim()) { this.renderMain(); return; }
+    const ql = q.toLowerCase();
+    const pts = getPatients().filter(p =>
+      p.nombre.toLowerCase().includes(ql) ||
+      p.rut.includes(ql) ||
+      p.cama.includes(ql) ||
+      (p.dx || '').toLowerCase().includes(ql)
+    );
+    document.getElementById('main-content').innerHTML = `
+      <div class="view-hdr">
+        <div><div class="view-title">Búsqueda: "${q}"</div>
+        <div class="view-sub">${pts.length} resultado${pts.length !== 1 ? 's' : ''}</div></div>
+      </div>
+      <div class="beds-grid">${pts.map(renderBedCard).join('') ||
+        '<div class="empty-st"><p>Sin resultados</p></div>'}</div>`;
+  },
+
+  /* ══════════════════════════════════════════ EXPORT / IMPORT */
   exportData() {
-    const data = {
-      patients: getPatients(),
-      history:  getHistory(),
-      config:   getConfig(),
-      exportedAt: new Date().toISOString(),
-    };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const data = { patients: getPatients(), history: getHistory(),
+                   config: getCfg(), at: new Date().toISOString() };
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `enfermeria_backup_${formatDate(new Date()).replace(/\//g,'-')}.json`;
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+    a.download = `trazabilidad_${fmtDate(new Date()).replace(/\//g, '-')}.json`;
     a.click();
-    showToast('Datos exportados correctamente');
+    toast('Datos exportados');
   },
 
-  importData() {
-    document.getElementById('import-file').click();
-  },
+  importData() { document.getElementById('import-file').click(); },
 
   handleImport(file) {
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (e) => {
+    const r = new FileReader();
+    r.onload = (e) => {
       try {
-        const data = JSON.parse(e.target.result);
-        if (data.patients) savePatients(data.patients);
-        if (data.history)  saveHistory(data.history);
-        if (data.config)   saveConfig({ ...getConfig(), ...data.config });
-        this.loadConfig();
+        const d = JSON.parse(e.target.result);
+        if (d.patients) savePatients(d.patients);
+        if (d.history)  saveHistory(d.history);
+        if (d.config)   saveCfg({ ...getCfg(), ...d.config });
+        this.zoneId = getCfg().zoneId || 'all';
         this.render();
-        showToast('Datos importados correctamente');
-      } catch {
-        showToast('Error al importar: archivo inválido', 'error');
-      }
+        toast('Datos importados correctamente');
+      } catch { toast('Archivo inválido', 'error'); }
     };
-    reader.readAsText(file);
+    r.readAsText(file);
   },
 
-  /* ─── PRINT ─── */
+  /* ══════════════════════════════════════════════════ PRINT */
   printShift() {
     const tpl = document.getElementById('print-template');
-    tpl.innerHTML = renderPrintTemplate();
+    tpl.innerHTML = renderPrint();
     tpl.style.display = 'block';
     window.print();
     tpl.style.display = 'none';
     tpl.innerHTML = '';
   },
 
-  /* ─── EDIT SERVICE NAME ─── */
-  editServiceName() {
-    const name = prompt('Nombre del servicio:', getConfig().serviceName);
-    if (!name) return;
-    const cfg = getConfig(); cfg.serviceName = name; saveConfig(cfg);
-    document.getElementById('service-name-display').textContent = name;
-    this.renderMain();
+  /* ══════════════════════════════════════════════ DIALOG */
+  closeDialog() {
+    document.getElementById('dialog-overlay').classList.add('hidden');
   },
 
-  /* ─── GLOBAL EVENT DELEGATION ─── */
-  bindGlobalEvents() {
-    // Delegation from document
-    document.addEventListener('click', (e) => {
-      const el = e.target.closest('[data-action]');
-      if (!el) return;
-      const action = el.dataset.action;
-      const cama   = el.dataset.cama;
-      const id     = el.dataset.id;
-
-      switch (action) {
-        case 'set-view':            this.setView(el.dataset.view); break;
-        case 'set-filter':          this.setFilter(el.dataset.filter); break;
-        case 'open-patient':        this.openPatient(cama); break;
-        case 'close-modal':
-        case 'close-modal-backdrop':this.closeModal(); break;
-        case 'close-dialog':        document.getElementById('dialog-overlay').classList.add('hidden'); break;
-        case 'toggle-shift':        this.toggleShift(); break;
-        case 'close-shift':         this.closeShift(); break;
-        case 'save-patient':        this.savePatient(cama); break;
-        case 'discharge-patient':   this.dischargePatient(cama); break;
-        case 'show-evol-form':      this.showEvolForm(cama); break;
-        case 'cancel-evol':         this.cancelEvolForm(cama); break;
-        case 'save-evol':           this.saveEvol(cama); break;
-        case 'del-evol':            this.delEvol(cama, id); break;
-        case 'add-exam':            this.addExam(cama); break;
-        case 'del-exam':            this.delExam(cama, id); break;
-        case 'add-proc':            this.addProc(cama); break;
-        case 'toggle-proc':         this.toggleProc(cama, id); break;
-        case 'del-proc':            this.delProc(cama, id); break;
-        case 'add-pend':            this.addPend(cama); break;
-        case 'del-pend':            this.delPend(cama, id); break;
-        case 'export-data':         this.exportData(); break;
-        case 'import-data':         this.importData(); break;
-        case 'print-shift':         this.printShift(); break;
-        case 'edit-service-name':   this.editServiceName(); break;
-        case 'view-last-shift':     this.viewLastShift(); break;
-        case 'toggle-history':      this.toggleHistoryCard(el.dataset.idx); break;
-      }
-    });
-
-    // Format toggle buttons (SOAP/narrativo)
-    document.addEventListener('click', (e) => {
-      const btn = e.target.closest('.format-btn');
-      if (!btn) return;
-      btn.closest('.format-toggle').querySelectorAll('.format-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      const fmt = btn.dataset.format;
-      const form = btn.closest('.evol-form');
-      const ta = form ? form.querySelector('textarea') : null;
-      if (ta && fmt === 'SOAP') {
-        ta.value = 'S: (Subjetivo — qué refiere el paciente)\n\nO: (Objetivo — signos vitales, hallazgos al examen)\n\nA: (Análisis — evaluación de la situación)\n\nP: (Plan — intervenciones y próximos pasos)';
-        ta.focus();
-      } else if (ta && fmt === 'narrativo') {
-        if (ta.value.startsWith('S:')) ta.value = '';
-      }
-    });
-
-    // Professional name edit
-    document.getElementById('professional-name').addEventListener('blur', (e) => {
-      const cfg = getConfig();
-      cfg.professional = e.target.textContent.trim() || cfg.professional;
-      saveConfig(cfg);
-    });
-
+  /* ══════════════════════════════════════════════ EVENTS
+     Todos los eventos van aquí. El modal NO usa event delegation
+     para evitar el bug donde el select no se puede clickear.    */
+  bindEvents() {
     // Search
-    let searchTimeout;
-    document.getElementById('search-input').addEventListener('input', (e) => {
-      clearTimeout(searchTimeout);
-      searchTimeout = setTimeout(() => this.handleSearch(e.target.value), 300);
+    let st;
+    document.getElementById('search-input')?.addEventListener('input', e => {
+      clearTimeout(st); st = setTimeout(() => this.handleSearch(e.target.value), 280);
     });
 
     // Import file
-    document.getElementById('import-file').addEventListener('change', (e) => {
-      this.handleImport(e.target.files[0]);
-      e.target.value = '';
+    document.getElementById('import-file')?.addEventListener('change', e => {
+      this.handleImport(e.target.files[0]); e.target.value = '';
     });
 
-    // ESC closes modal
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') this.closeModal();
+    // ESC cierra modal
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') this.closeModal(); });
+
+    // Modal backdrop click (solo el overlay, no el container)
+    document.getElementById('modal-overlay')?.addEventListener('click', e => {
+      if (e.target === document.getElementById('modal-overlay')) this.closeModal();
+    });
+
+    // Overlay del sidebar mobile
+    document.getElementById('sidebar-overlay')?.addEventListener('click', () => this.closeSidebar());
+
+    // Topbar buttons via data-action (solo los del topbar, NO el modal)
+    document.getElementById('topbar')?.addEventListener('click', e => {
+      const el = e.target.closest('[data-action]');
+      if (!el) return;
+      switch (el.dataset.action) {
+        case 'toggle-shift':  this.toggleShift(); break;
+        case 'export-data':   this.exportData(); break;
+        case 'import-data':   this.importData(); break;
+        case 'print-shift':   this.printShift(); break;
+      }
     });
   },
 };
 
-/* ─── BOOT ─── */
+/* ──────────────────────────────────────────────────── BOOT */
 document.addEventListener('DOMContentLoaded', () => APP.init());
