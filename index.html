@@ -2,8 +2,12 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sistema de Enfermería</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#0F172A">
+  <title>Trazabilidad de Enfermería</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -13,16 +17,27 @@
   <!-- ═══════════════════════════════════════════════ TOPBAR ═══ -->
   <header id="topbar">
     <div class="topbar-left">
+
+      <!-- Hamburger (visible en mobile/tablet) -->
+      <button id="hamburger-btn" onclick="APP.toggleSidebar()" title="Menú">
+        <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+          <path d="M2 4h14M2 9h14M2 14h14"/>
+        </svg>
+      </button>
+
       <div class="logo">
-        <svg width="30" height="30" viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <svg width="28" height="28" viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg">
           <rect width="30" height="30" rx="8" fill="#1E40AF" opacity="0.4"/>
-          <path d="M15 5L25 10V16C25 21.523 20.523 27 15 27C9.477 27 5 21.523 5 16V10L15 5Z" stroke="#60A5FA" stroke-width="1.5" fill="rgba(59,130,246,0.15)"/>
+          <path d="M15 5L25 10V16C25 21.523 20.523 27 15 27C9.477 27 5 21.523 5 16V10L15 5Z"
+                stroke="#60A5FA" stroke-width="1.5" fill="rgba(59,130,246,0.15)"/>
           <path d="M15 10v10M10 15h10" stroke="#60A5FA" stroke-width="2" stroke-linecap="round"/>
         </svg>
-        <span class="logo-text">Sistema de Enfermería</span>
+        <span class="logo-text">Trazabilidad de Enfermería</span>
       </div>
+
       <div class="service-name-wrapper">
-        <span id="service-name-display" class="service-name" title="Click para editar" data-action="edit-service-name"></span>
+        <span id="service-name-display" class="service-name"
+              title="Click para editar" data-action="edit-service-name"></span>
       </div>
     </div>
 
@@ -35,7 +50,9 @@
 
     <div class="topbar-right">
       <div class="search-wrapper">
-        <input type="text" id="search-input" placeholder="&#128269; Buscar paciente, RUT o cama..." class="search-input" autocomplete="off">
+        <input type="text" id="search-input"
+               placeholder="&#128269; Buscar paciente, RUT o cama..."
+               class="search-input" autocomplete="off">
       </div>
       <div class="time-display">
         <div id="clock" class="clock">--:--:--</div>
@@ -43,20 +60,24 @@
       </div>
       <div class="professional-wrapper" title="Click para editar nombre">
         <span class="professional-icon">&#128100;</span>
-        <span id="professional-name" class="professional-name" contenteditable="true" spellcheck="false"></span>
+        <span id="professional-name" class="professional-name"
+              contenteditable="true" spellcheck="false"></span>
       </div>
       <button class="icon-btn no-print" title="Exportar datos JSON" data-action="export-data">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"
+             stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
           <path d="M8 1v8M5 6l3 3 3-3M2 11v2a1 1 0 001 1h10a1 1 0 001-1v-2"/>
         </svg>
       </button>
       <button class="icon-btn no-print" title="Importar datos JSON" data-action="import-data">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"
+             stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
           <path d="M8 11V3M5 6L8 3l3 3M2 11v2a1 1 0 001 1h10a1 1 0 001-1v-2"/>
         </svg>
       </button>
       <button class="icon-btn no-print" title="Imprimir resumen del turno" data-action="print-shift">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"
+             stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
           <rect x="3" y="5" width="10" height="8" rx="1"/>
           <path d="M5 5V3a1 1 0 011-1h4a1 1 0 011 1v2M5 9h6M5 11h4"/>
         </svg>
@@ -66,30 +87,35 @@
 
   <!-- ════════════════════════════════════════════ APP LAYOUT ═══ -->
   <div id="app-layout">
-    <nav id="sidebar"><!-- rendered by JS --></nav>
-    <main id="main-content"><!-- rendered by JS --></main>
+    <nav id="sidebar"><!-- renderizado por JS --></nav>
+    <main id="main-content"><!-- renderizado por JS --></main>
   </div>
 
 </div>
 
+<!-- Overlay oscuro para cerrar sidebar en mobile -->
+<div id="sidebar-overlay" onclick="APP.closeSidebar()"></div>
+
 <!-- ═══════════════════════════════════════════════ PATIENT MODAL ═══ -->
-<div id="modal-overlay" class="modal-overlay hidden" data-action="close-modal-backdrop">
-  <div id="modal-container" class="modal-container" onclick="event.stopPropagation()">
-    <div id="modal-content"><!-- rendered by JS --></div>
+<div id="modal-overlay" class="modal-overlay hidden"
+     data-action="close-modal-backdrop">
+  <div id="modal-container" class="modal-container"
+       onclick="event.stopPropagation()">
+    <div id="modal-content"><!-- renderizado por JS --></div>
   </div>
 </div>
 
 <!-- ═══════════════════════════════════════════════ DIALOG MODAL ═══ -->
 <div id="dialog-overlay" class="modal-overlay dialog-overlay hidden">
   <div class="dialog-container" onclick="event.stopPropagation()">
-    <div id="dialog-content"><!-- rendered by JS --></div>
+    <div id="dialog-content"><!-- renderizado por JS --></div>
   </div>
 </div>
 
-<!-- ═══════════════════════════════════ PRINT TEMPLATE (hidden) ═══ -->
+<!-- Print template (oculto) -->
 <div id="print-template" style="display:none;"></div>
 
-<!-- Hidden file input for import -->
+<!-- Import file input -->
 <input type="file" id="import-file" accept=".json" style="display:none">
 
 <!-- Toast container -->
